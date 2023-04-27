@@ -11,9 +11,9 @@ int main()
 {
     long long sz;
 
-    char buf[500];
+    char buf[100000];
     char write_buf[] = "testing writing";
-    int offset = 500;
+    int offset = 10000;
 
     int fd = open(FIB_DEV, O_RDWR);
     if (fd < 0) {
@@ -22,15 +22,15 @@ int main()
     }
 
     for (int i = 0; i <= offset; i++) {
-        sz = write(fd, write_buf, strlen(write_buf));
+        sz = write(fd, write_buf, 6);
         printf("Writing to " FIB_DEV ", returned the sequence %lld\n", sz);
     }
 
     for (int i = 0; i <= offset; i++) {
         lseek(fd, i, SEEK_SET);
-        sz = read(fd, buf, 100);
+        sz = read(fd, buf, 3);
         if (sz)
-            printf("returned message was truncated!\n");
+            printf(" Failed \n");
         printf("Reading from " FIB_DEV
                " at offset %d, returned the sequence "
                "%s.\n",
@@ -39,9 +39,9 @@ int main()
 
     for (int i = offset; i >= 0; i--) {
         lseek(fd, i, SEEK_SET);
-        sz = read(fd, buf, 100);
+        sz = read(fd, buf, 3);
         if (sz)
-            printf("returned message was truncated!\n");
+            printf(" Failed \n");
         printf("Reading from " FIB_DEV
                " at offset %d, returned the sequence "
                "%s.\n",

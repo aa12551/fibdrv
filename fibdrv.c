@@ -4,6 +4,7 @@
 #include <linux/init.h>
 #include <linux/kdev_t.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/uaccess.h>  // Required for the copy_to_user()
@@ -19,12 +20,13 @@ MODULE_VERSION("0.1");
 /* MAX_LENGTH is set to 92 because
  * ssize_t can't fit the number > 92
  */
-#define MAX_LENGTH 500
+#define MAX_LENGTH 10000
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
+static ktime_t fib_kt;
 
 static long long fib_sequence(long long k)
 {
@@ -39,6 +41,26 @@ static long long fib_sequence(long long k)
     }
 
     return f[k];
+}
+
+static long long fib_doubling(long long target)
+{
+    if (target <= 2)
+        return !!target;
+
+    // find first 1
+    uint8_t count = 63 - __builtin_clzll(target);
+    uint64_t fib_n0 = 1, fib_n1 = 1;
+
+    for (uint64_t i = count, fib_2n0, fib_2n1, mask; i-- > 0;) {
+        fib_2n0 = fib_n0 * ((fib_n1 << 1) - fib_n0);
+        fib_2n1 = fib_n0 * fib_n0 + fib_n1 * fib_n1;
+
+        mask = -!!(target & (1UL << i));
+        fib_n0 = (fib_2n0 & ~mask) + (fib_2n1 & mask);
+        fib_n1 = (fib_2n0 & mask) + fib_2n1;
+    }
+    return fib_n0;
 }
 
 static int fib_open(struct inode *inode, struct file *file)
@@ -62,14 +84,39 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    bn *fib = bn_alloc(1);
-    bn_fib(fib, *offset);
-    char *p = bn_to_string(fib);
-    size_t len = strlen(p) + 1;
-    size_t left = copy_to_user(buf, p, len);
-    bn_free(fib);
-    kfree(p);
-    return left;  // return number of bytes that could not be copied
+    long long result;
+    char *p;
+    ssize_t len;
+    ssize_t left;
+    bn *fib;
+    switch (size) {
+    case 0:  // fibonacci (return value)
+        return fib_sequence(*offset);
+    case 1:  // fast doubling (return value)
+        fib_kt = ktime_get();
+        result = fib_doubling(*offset);
+        fib_kt = ktime_sub(ktime_get(), fib_kt);
+        return result;
+    case 2:  // bignum fiboacci (copy to user)
+        fib = bn_alloc(1);
+        bn_fib(fib, *offset);
+        p = bn_to_string(fib);
+        len = strlen(p) + 1;
+        left = copy_to_user(buf, p, len);
+        bn_free(fib);
+        kfree(p);
+        return left;
+    case 3:  // bignum fast doubling (copy to user)
+        fib = bn_alloc(1);
+        bn_fib_fdoubling(fib, *offset);
+        p = bn_to_string(fib);
+        len = strlen(p) + 1;
+        left = copy_to_user(buf, p, len);
+        bn_free(fib);
+        kfree(p);
+        return left;  // return how many bytes it can't copy
+    }
+    return 0;
 }
 
 /* write operation is skipped */
@@ -78,6 +125,43 @@ static ssize_t fib_write(struct file *file,
                          size_t size,
                          loff_t *offset)
 {
+    char *p;
+    ssize_t len;
+    bn *fib;
+    switch (size) {
+    case 0:  // fibonacci (return value)
+        fib_kt = ktime_get();
+        fib_sequence(*offset);
+        fib_kt = ktime_sub(ktime_get(), fib_kt);
+        return ktime_to_ns(fib_kt);
+    case 1:  // fast doubling (return value)
+        fib_kt = ktime_get();
+        fib_doubling(*offset);
+        fib_kt = ktime_sub(ktime_get(), fib_kt);
+        return ktime_to_ns(fib_kt);
+    case 2:  // bignum fiboacci (copy to user)
+        fib = bn_alloc(1);
+        fib_kt = ktime_get();
+        bn_fib(fib, *offset);
+        fib_kt = ktime_sub(ktime_get(), fib_kt);
+        p = bn_to_string(fib);
+        len = strlen(p) + 1;
+        copy_to_user(buf, p, len);
+        bn_free(fib);
+        kfree(p);
+        return ktime_to_ns(fib_kt);
+    case 3:  // bignum fast doubling (copy to user)
+        fib = bn_alloc(1);
+        fib_kt = ktime_get();
+        bn_fib_fdoubling(fib, *offset);
+        fib_kt = ktime_sub(ktime_get(), fib_kt);
+        p = bn_to_string(fib);
+        len = strlen(p) + 1;
+        copy_to_user(buf, p, len);
+        bn_free(fib);
+        kfree(p);
+        return ktime_to_ns(fib_kt);
+    }
     return 1;
 }
 

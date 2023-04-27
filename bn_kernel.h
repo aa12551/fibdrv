@@ -46,20 +46,15 @@ int bn_cmp(const bn *a, const bn *b);
 void bn_swap(bn *a, bn *b);
 
 /* left bit shift on bn (maximun shift 31) */
-void bn_lshift(bn *src, size_t shift);
-
-/* right bit shift on bn (maximun shift 31) */
-void bn_rshift(bn *src, size_t shift);
+void bn_lshift(const bn *src, size_t shift, bn *dest);
 
 /* c = a + b */
 void bn_add(const bn *a, const bn *b, bn *c);
-
-/* c = a - b */
-void bn_sub(const bn *a, const bn *b, bn *c);
 
 /* c = a x b */
 void bn_mult(const bn *a, const bn *b, bn *c);
 
 /* calc n-th Fibonacci number and save into dest */
-void bn_fib_fdoubling(bn *dest, unsigned int n);
+// void bn_fib_QMfdoubling(bn *dest, unsigned int n);
 void bn_fib(bn *dest, unsigned int n);
+void bn_fib_fdoubling(bn *dest, unsigned int n);

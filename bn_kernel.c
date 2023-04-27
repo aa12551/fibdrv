@@ -150,38 +150,24 @@ void bn_swap(bn *a, bn *b)
 }
 
 /* left bit shift on bn (maximun shift 31) */
-void bn_lshift(bn *src, size_t shift)
+void bn_lshift(const bn *src, size_t shift, bn *dest)
 {
     size_t z = bn_clz(src);
     shift %= 32;  // only handle shift within 32 bits atm
     if (!shift)
         return;
 
-    if (shift > z)
-        bn_resize(src, src->size + 1);
+    if (shift > z) {
+        bn_resize(dest, src->size + 1);
+        dest->number[src->size] = src->number[src->size - 1] >> (32 - shift);
+    } else {
+        bn_resize(dest, src->size);
+    }
     /* bit shift */
     for (int i = src->size - 1; i > 0; i--)
-        src->number[i] =
+        dest->number[i] =
             src->number[i] << shift | src->number[i - 1] >> (32 - shift);
-    src->number[0] <<= shift;
-}
-
-/* right bit shift on bn (maximun shift 31) */
-void bn_rshift(bn *src, size_t shift)
-{
-    size_t z = 32 - bn_clz(src);
-    shift %= 32;  // only handle shift within 32 bits atm
-    if (!shift)
-        return;
-
-    /* bit shift */
-    for (int i = 0; i < (src->size - 1); i++)
-        src->number[i] = src->number[i] >> shift | src->number[i + 1]
-                                                       << (32 - shift);
-    src->number[src->size - 1] >>= shift;
-
-    if (shift >= z && src->size > 1)
-        bn_resize(src, src->size - 1);
+    dest->number[0] = src->number[0] << shift;
 }
 
 /*
@@ -228,36 +214,6 @@ static void bn_do_add(const bn *a, const bn *b, bn *c)
         bn_resize(c, c->size - 1);
 }
 
-/*
- * |c| = |a| - |b|
- * Note: |a| > |b| must be true
- */
-static void bn_do_sub(const bn *a, const bn *b, bn *c)
-{
-    // max digits = max(sizeof(a) + sizeof(b))
-    int d = MAX(a->size, b->size);
-    bn_resize(c, d);
-
-    long long int carry = 0;
-    for (int i = 0; i < c->size; i++) {
-        unsigned int tmp1 = (i < a->size) ? a->number[i] : 0;
-        unsigned int tmp2 = (i < b->size) ? b->number[i] : 0;
-
-        carry = (long long int) tmp1 - tmp2 - carry;
-        if (carry < 0) {
-            c->number[i] = carry + (1LL << 32);
-            carry = 1;
-        } else {
-            c->number[i] = carry;
-            carry = 0;
-        }
-    }
-
-    d = bn_clz(c) / 32;
-    if (d == c->size)
-        --d;
-    bn_resize(c, c->size - d);
-}
 
 /*
  * c = a + b
@@ -289,17 +245,6 @@ void bn_add(const bn *a, const bn *b, bn *c)
     }
 }
 
-/*
- * c = a - b
- * Note: work for c == a or c == b
- */
-void bn_sub(const bn *a, const bn *b, bn *c)
-{
-    /* xor the sign bit of b and let bn_add handle it */
-    bn tmp = *b;
-    tmp.sign ^= 1;  // a - b = a + (-b)
-    bn_add(a, &tmp, c);
-}
 
 /* c += x, starting from offset */
 static void bn_mult_add(bn *c, int offset, unsigned long long int x)
@@ -333,6 +278,8 @@ void bn_mult(const bn *a, const bn *b, bn *c)
     } else {
         tmp = NULL;
         bn_resize(c, d);
+        for (int i = 0; i < d; i++)
+            c->number[i] = 0;
     }
 
     for (int i = 0; i < a->size; i++) {
@@ -372,10 +319,6 @@ void bn_fib(bn *dest, unsigned int n)
     bn_free(b);
 }
 
-/*
- * calc n-th Fibonacci number and save into dest
- * using fast doubling algorithm
- */
 void bn_fib_fdoubling(bn *dest, unsigned int n)
 {
     bn_resize(dest, 1);
@@ -384,36 +327,29 @@ void bn_fib_fdoubling(bn *dest, unsigned int n)
         return;
     }
 
-    bn *f1 = dest;        /* F(k) */
-    bn *f2 = bn_alloc(1); /* F(k+1) */
+    bn *f1 = bn_alloc(1);  // f1 = F(k-1)
+    bn *f2 = dest;         // f2 = F(k) = dest
     f1->number[0] = 0;
     f2->number[0] = 1;
     bn *k1 = bn_alloc(1);
     bn *k2 = bn_alloc(1);
 
-    /* walk through the digit of n */
-    for (unsigned int i = 1U << 31; i; i >>= 1) {
-        /* F(2k) = F(k) * [ 2 * F(k+1) – F(k) ] */
-        bn_cpy(k1, f2);
-        bn_lshift(k1, 1);
-        bn_sub(k1, f1, k1);
-        bn_mult(k1, f1, k1);
-        /* F(2k+1) = F(k)^2 + F(k+1)^2 */
-        bn_mult(f1, f1, f1);
-        bn_mult(f2, f2, f2);
-        bn_cpy(k2, f1);
-        bn_add(k2, f2, k2);
+    for (unsigned int i = 1U << (30 - __builtin_clz(n)); i; i >>= 1) {
+        /* F(2k-1) = F(k)^2 + F(k-1)^2 */
+        /* F(2k) = F(k) * [ 2 * F(k-1) + F(k) ] */
+        bn_lshift(f1, 1, k1);  // k1 = 2 * F(k-1)
+        bn_add(k1, f2, k1);    // k1 = 2 * F(k-1) + F(k)
+        bn_mult(k1, f2, k2);   // k2 = k1 * f2 = F(2k)
+        bn_mult(f2, f2, k1);   // k1 = F(k)^2
+        bn_swap(f2, k2);       // f2 <-> k2, f2 = F(2k) now
+        bn_mult(f1, f1, k2);   // k2 = F(k-1)^2
+        bn_add(k2, k1, f1);    // f1 = k1 + k2 = F(2k-1) now
         if (n & i) {
-            bn_cpy(f1, k2);
-            bn_cpy(f2, k1);
-            bn_add(f2, k2, f2);
-        } else {
-            bn_cpy(f1, k1);
-            bn_cpy(f2, k2);
+            bn_swap(f1, f2);     // f1 = F(2k+1)
+            bn_add(f1, f2, f2);  // f2 = F(2k+2)
         }
     }
-    // return f[0]
-    bn_free(f2);
+    bn_free(f1);
     bn_free(k1);
     bn_free(k2);
 }
