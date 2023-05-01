@@ -18,6 +18,9 @@
 #define DIV_ROUNDUP(x, len) (((x) + (len) -1) / (len))
 #endif
 
+#define INIT_ALLOC_SIZE 4
+#define ALLOC_CHUNK_SIZE 4
+
 /* count leading zeros of src*/
 static int bn_clz(const bn *src)
 {
@@ -85,9 +88,12 @@ char *bn_to_string(const bn *src)
 bn *bn_alloc(size_t size)
 {
     bn *new = (bn *) kmalloc(sizeof(bn), GFP_KERNEL);
-    new->number = kmalloc(sizeof(int) * size, GFP_KERNEL);
-    memset(new->number, 0, sizeof(int) * size);
     new->size = size;
+    new->capacity = size > INIT_ALLOC_SIZE ? size : INIT_ALLOC_SIZE;
+    new->number =
+        (unsigned int *) kmalloc(sizeof(int) * new->capacity, GFP_KERNEL);
+    for (int i = 0; i < size; i++)
+        new->number[i] = 0;
     new->sign = 0;
     return new;
 }
@@ -118,12 +124,16 @@ static int bn_resize(bn *src, size_t size)
         return 0;
     if (size == 0)  // prevent krealloc(0) = kfree, which will cause problem
         return bn_free(src);
-    src->number = krealloc(src->number, sizeof(int) * size, GFP_KERNEL);
-    if (!src->number) {  // realloc fails
-        return -1;
+    if (size > src->capacity) { /* need to allocate larger capacity */
+        src->capacity = (size + (ALLOC_CHUNK_SIZE - 1)) &
+                        ~(ALLOC_CHUNK_SIZE - 1);  // ceil to 4*n
+        src->number =
+            krealloc(src->number, sizeof(int) * src->capacity, GFP_KERNEL);
     }
-    if (size > src->size)
-        memset(src->number + src->size, 0, sizeof(int) * (size - src->size));
+    if (size > src->size) { /* memset(src, 0, size) */
+        for (int i = src->size; i < size; i++)
+            src->number[i] = 0;
+    }
     src->size = size;
     return 0;
 }
@@ -214,6 +224,36 @@ static void bn_do_add(const bn *a, const bn *b, bn *c)
         bn_resize(c, c->size - 1);
 }
 
+/*
+ * |c| = |a| - |b|
+ * Note: |a| > |b| must be true
+ */
+static void bn_do_sub(const bn *a, const bn *b, bn *c)
+{
+    // max digits = max(sizeof(a) + sizeof(b))
+    int d = MAX(a->size, b->size);
+    bn_resize(c, d);
+
+    long long int carry = 0;
+    for (int i = 0; i < c->size; i++) {
+        unsigned int tmp1 = (i < a->size) ? a->number[i] : 0;
+        unsigned int tmp2 = (i < b->size) ? b->number[i] : 0;
+
+        carry = (long long int) tmp1 - tmp2 - carry;
+        if (carry < 0) {
+            c->number[i] = carry + (1LL << 32);
+            carry = 1;
+        } else {
+            c->number[i] = carry;
+            carry = 0;
+        }
+    }
+
+    d = bn_clz(c) / 32;
+    if (d == c->size)
+        --d;
+    bn_resize(c, c->size - d);
+}
 
 /*
  * c = a + b

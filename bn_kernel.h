@@ -5,8 +5,9 @@
  * sign = 1 for negative number
  */
 typedef struct _bn {
-    unsigned int *number;
-    unsigned int size;
+    unsigned int *number;  /* ptr to number */
+    unsigned int size;     /* length of number */
+    unsigned int capacity; /* total allocated length, size <= capacity */
     int sign;
 } bn;
 
