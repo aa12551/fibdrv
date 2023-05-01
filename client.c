@@ -13,7 +13,7 @@ int main()
 
     char buf[100000];
     char write_buf[] = "testing writing";
-    int offset = 10000;
+    int offset = 5000;
 
     int fd = open(FIB_DEV, O_RDWR);
     if (fd < 0) {

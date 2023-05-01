@@ -4,10 +4,27 @@
  * number[size - 1] contains most significant bits
  * sign = 1 for negative number
  */
+
+
+#if defined(__LP64__) || defined(__x86_64__) || defined(__amd64__) || \
+    defined(__aarch64__)
+#define BN_WSIZE 4
+#endif
+
+#if BN_WSIZE == 8
+typedef uint64_t bn_data;
+typedef unsigned __int128 bn_data_tmp;  // gcc support __int128
+#elif BN_WSIZE == 4
+typedef uint32_t bn_data;
+typedef uint64_t bn_data_tmp;
+#else
+#error "BN_WSIZE must be 4 or 8"
+#endif
+
 typedef struct _bn {
-    unsigned int *number;  /* ptr to number */
-    unsigned int size;     /* length of number */
-    unsigned int capacity; /* total allocated length, size <= capacity */
+    bn_data *number;  /* ptr to number */
+    bn_data size;     /* length of number */
+    bn_data capacity; /* total allocated length, size <= capacity */
     int sign;
 } bn;
 
